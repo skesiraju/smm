@@ -7,7 +7,8 @@
 # Last modified : 30 Nov 2017
 
 """
-Train SMM or extract document i-vectors using existing trained model.
+1. Train SMM
+2. Extract document i-vectors using trained model.
 """
 
 import os
@@ -24,7 +25,7 @@ import scipy.io as sio
 import torch
 import torch.optim as optim
 from torch.autograd import Variable
-from smm import SMM
+from smm import SMM, update_ws, update_ts
 
 
 def read_simple_flist(fname):
@@ -69,7 +70,7 @@ def create_config(args):
 
         config['stats_file'] = os.path.realpath(args.stats_file)
         if args.v:
-            config['vocab_file'] = os.path.realpath(args.vocab_file)
+            config['vocab_file'] = os.path.realpath(args.v)
 
         config['iv_dim'] = args.k
         config['lam_w'] = args.lw  # prior (precision) for ivecs
@@ -77,6 +78,7 @@ def create_config(args):
         config['lam_t'] = args.lt
         config['b_size'] = args.bs
         config['eta'] = args.eta
+        config['cuda'] = args.cuda
 
         config['trn_iters'] = args.trn
         config['xtr_iters'] = args.xtr
@@ -104,15 +106,16 @@ def create_model(config, stats):
     else:
         hyper = {'lam_w': config['lam_w'], 'reg_t': config['reg_t'],
                  'lam_t': config['lam_t'], 'iv_dim': config['iv_dim']}
-        model = SMM(stats, hyper)
+        model = SMM(stats, hyper, config['cuda'])
         print("Model created.")
 
     return model
 
 
-def save_model_tr(model, config, sfx):
+def save_model_tr(model, config, itr):
     """ Save model and config """
 
+    sfx = str(itr) + '.pt'
     config['latest_trn_model'] = config['exp_dir'] + 'model_T' + sfx
     torch.save(model, config['latest_trn_model'])
     json.dump(config, open(config['cfg_file'], 'w'), indent=2)
@@ -171,37 +174,31 @@ def train(stats, config):
 
         config['trn_iters'] = ARGS.trn
 
-        X = Variable(torch.from_numpy(stats.A.astype(np.float32)).float())
+        if ARGS.cuda:
+            X = Variable(torch.from_numpy(stats.A.astype(np.float32)).cuda())
+        else:
+            X = Variable(torch.from_numpy(stats.A.astype(np.float32)))
+
         loss = model.loss(X)
-        print("Init  LLH:", -loss.data.numpy()[0])
+        print("Init  LLH:", -loss.data.cpu().numpy()[0])
 
         for i in range(config['trn_done'], ARGS.trn):
 
             # update i-vectors W
-            old_loss = model.nllh_d.data.clone()
-            old_w = model.W.data.clone()
-            opt_w.zero_grad()
-
-            loss = model.loss(X)
-            loss.backward()
-            opt_w.step()
-            loss = model.check_update_w(X, old_loss, old_w)
+            loss = update_ws(model, opt_w, loss, X)
 
             # update bases T
-            old_loss = loss.data.clone()
-            old_t = model.T.data.clone()
-            opt_t.zero_grad()
+            loss = update_ts(model, opt_t, loss, X)
 
-            loss.backward()
-            opt_t.step()
-            loss = model.check_update_t(X, old_loss, old_t)
+            if (i+1)*2 == ARGS.trn:
+                print("Half-way LLH:", -loss.data.cpu().numpy()[0])
+                save_model_tr(model, config, i+1)
 
-        print("Final LLH:", -loss.data.numpy()[0])
+        print("Final LLH:", -loss.data.cpu().numpy()[0])
         print("Training time: %.4f sec" % (time() - stime))
 
         config['trn_done'] = ARGS.trn
-        sfx = str(config['trn_done']) + '.pt'
-        save_model_tr(model, config, sfx)
+        save_model_tr(model, config, config['trn_done'])
 
     else:
         print("Model already exists with given number of training iterations.")
@@ -223,27 +220,24 @@ def extract_ivectors(stats, model, config):
 
     config['xtr_iters'] = ARGS.xtr
 
-    X = Variable(torch.from_numpy(stats.A.astype(np.float32)).float())
+    if ARGS.cuda:
+        X = Variable(torch.from_numpy(stats.A.astype(np.float32)).cuda())
+    else:
+        X = Variable(torch.from_numpy(stats.A.astype(np.float32)))
+
     loss = model.loss(X)
-    print("Init  LLH:", -loss.data.numpy()[0])
+    print("Init  LLH:", -loss.data.cpu().numpy()[0])
 
     for i in range(config['xtr_iters']):
 
         # update i-vectors W
-        old_loss = model.nllh_d.data.clone()
-        old_w = model.W.data.clone()
-        opt_w.zero_grad()
-
-        loss = model.loss(X)
-        loss.backward()
-        opt_w.step()
-        loss = model.check_update_w(X, old_loss, old_w)
+        loss = update_ws(model, opt_w, loss, X)
 
         if ((i+1) % ARGS.nth == 0) or (i+1 == ARGS.xtr):
             sfx = sbase + "_" + mbase + "_e" + str(i+1) + ".npy"
             np.save(config['ivecs_dir'] + sfx, model.W.data.numpy().T)
 
-    print("Final LLH:", -loss.data.numpy()[0])
+    print("Final LLH:", -loss.data.cpu().numpy()[0])
     print("Extraction time: %.4f sec" % (time() - stime))
     print("Saved in", config['ivecs_dir'])
 
@@ -282,10 +276,10 @@ if __name__ == "__main__":
     PARSER.add_argument("-o", default=".", help="path to output dir")
     PARSER.add_argument("-v", help="path to vocab file")
     PARSER.add_argument("-m", help="path to trained model file")
-    PARSER.add_argument("-k", default=50, type=int, help="ivector dim")
+    PARSER.add_argument("-k", default=100, type=int, help="ivector dim")
     PARSER.add_argument("-lw", default=1e-4, type=float,
                         help="reg. const. for i-vecs")
-    PARSER.add_argument("-rt", default="l1", help="l1 or l2 reg. for bases T")
+    PARSER.add_argument("-rt", default="l2", help="l1 or l2 reg. for bases T")
     PARSER.add_argument("-lt", default=1e-4, type=float,
                         help='reg. coeff. for bases T')
     PARSER.add_argument("-eta", type=float, default=0.1, help="learning rate")
@@ -297,10 +291,13 @@ if __name__ == "__main__":
     PARSER.add_argument('--nth', default=5, type=int,
                         help='save every nth i-vector while extracting')
     PARSER.add_argument('--ovr', action='store_true', help='over-write the exp dir')
+    PARSER.add_argument("--nocuda", action='store_true')
 
     ARGS = PARSER.parse_args()
 
     torch.set_num_threads(ARGS.mkl)
     torch.manual_seed(0)
+    ARGS.cuda = not ARGS.nocuda and torch.cuda.is_available()
+    print("CUDA:", ARGS.cuda)
 
     main()
