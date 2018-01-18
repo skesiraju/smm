@@ -22,9 +22,9 @@ import torch
 import torch.optim as optim
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
-from smm_v2 import (SMM, estimate_ubm, update_ws, update_ts,
-                    update_ws_batch_wise, update_ts_batch_wise,
-                    compute_loss_batch_wise)
+from smm import (SMM, estimate_ubm, update_ws, update_ts,
+                 update_ws_batch_wise, update_ts_batch_wise,
+                 compute_loss_batch_wise)
 from TwentyNewsDataset import TwentyNewsDataset
 import utils
 
