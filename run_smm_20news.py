@@ -87,6 +87,8 @@ def train_batch_wise(stats, config, train_loader):
 
         print("Training ..")
         config['trn_iters'] = ARGS.trn
+        config['eta'] = ARGS.eta
+        config['eta_t'] = ARGS.eta_t
 
         loss = compute_loss_batch_wise(model, train_loader, use='both')
         print("Init  LLH:", -loss.cpu().numpy())
@@ -95,12 +97,12 @@ def train_batch_wise(stats, config, train_loader):
 
             loss = update_ws_batch_wise(model, opt_w, train_loader)
             loss += model.t_penalty().data.clone()
-            # print("%2d W LLH: %.4f" % (i, -loss.cpu().numpy()))
+            print("%2d W LLH: %.4f" % (i, -loss.cpu().numpy()))
 
             loss = compute_loss_batch_wise(model, train_loader, use='T')
-            loss = update_ts_batch_wise(model, opt_t, train_loader, loss)
+            loss = update_ts_batch_wise(model, opt_t, train_loader, loss, config)
             loss += model.w_penalty().sum().data.clone()
-            # print("%2d T LLH: %.4f" % (i, -loss.cpu().numpy()))
+            print("%2d T LLH: %.4f" % (i, -loss.cpu().numpy()))
 
             if (i+1)*2 == ARGS.trn:
                 print("Half-way LLH:", -loss.cpu().numpy(),
@@ -154,7 +156,7 @@ def train(stats, config, train_loader):
 
             # update bases T
             loss = model.loss(X, use='T')
-            loss = update_ts(model, opt_t, loss, X)
+            loss = update_ts(model, opt_t, loss, X, config)
             loss += model.w_penalty().sum()
             print("T     LLH:", loss.data.cpu().numpy())
 

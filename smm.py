@@ -203,14 +203,46 @@ def update_ws(model, opt_w, loss, X, rng=None):
     return loss
 
 
-def update_ts(model, opt_t, loss, X):
+def sign_projection(model, config):
+    """ Sign projection in case of L1 regularization """
+
+    T = model.T.data.cpu().clone().numpy()
+    grad = model.T.grad.data.cpu().clone().numpy()
+
+    diff_pts = T.nonzero()
+    grad[diff_pts] += (config['lam_t'] * np.sign(T[diff_pts]))
+
+    # sub-gradients
+    non_diff_pts = np.where(T == 0)
+    if len(non_diff_pts[0]) > 0:
+        for row, col in zip(non_diff_pts[0], non_diff_pts[1]):
+            if grad[row, col] < -config['lam_t']:
+                grad[row, col] += config['lam_t']
+            elif grad[row, col] > config['lam_t']:
+                grad[row, col] -= config['lam_t']
+            elif abs(grad[row, col]) <= config['lam_t']:
+                grad[row, col] = 0.
+            else:
+                continue
+
+    if model.cuda:
+        model.T.grad.data = torch.from_numpy(T).float().cuda()
+    else:
+        model.T.grad.data = torch.from_numpy(T).float()
+
+
+def update_ts(model, opt_t, loss, X, config):
     """ Update bases (T) """
 
     old_loss = loss.data.clone()
     old_t = model.T.data.clone()
 
     opt_t.zero_grad()
-    loss.backward()
+    loss.backward()  # get the gradients
+
+    if config['reg_t'] == 'l1':
+        sign_projection(model, config)
+
     opt_t.step()
 
     # Check if the updates have decreased the loss, else backtrack
@@ -297,7 +329,7 @@ def update_ws_batch_wise(model, opt_w, data_loader):
     return loss
 
 
-def update_ts_batch_wise(model, opt_t, data_loader, old_loss):
+def update_ts_batch_wise(model, opt_t, data_loader, old_loss, config):
     """ Update bases batch wise
 
     Args:
@@ -305,6 +337,7 @@ def update_ts_batch_wise(model, opt_t, data_loader, old_loss):
         opt_t (torch.optim.Adagrad object):
         data_loader (torch.utils.data DataLoader object):
         old_loss (torch.Tensor): Old loss w.r.t. `T'
+        config (dict): Configuration dict
 
     Returns:
         loss (torch.Tensor): negative LLH
@@ -334,6 +367,10 @@ def update_ts_batch_wise(model, opt_t, data_loader, old_loss):
             t_pen = model.t_penalty()
             loss_batch += t_pen
             loss_batch.backward()
+
+            if config['reg_t'] == 'l1':
+                sign_projection(model, config)
+
             opt_t.step()
 
             loss = compute_loss_batch_wise(model, data_loader, use='T')
