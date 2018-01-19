@@ -226,9 +226,9 @@ def sign_projection(model, config):
                 continue
 
     if model.cuda:
-        model.T.grad.data = torch.from_numpy(T).float().cuda()
+        model.T.grad.data = torch.from_numpy(grad).float().cuda()
     else:
-        model.T.grad.data = torch.from_numpy(T).float()
+        model.T.grad.data = torch.from_numpy(grad).float()
 
 
 def update_ts(model, opt_t, loss, X, config):
