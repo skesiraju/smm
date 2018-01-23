@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 from collections import OrderedDict
 import torch
+import numpy as np
 import scipy.io as sio
 
 
@@ -154,3 +155,30 @@ def load_stats(stats_f, vocab_f):
             sys.exit()
 
     return stats.tocsc()
+
+
+def merge_ivecs(ivecs_dir, sbase, mbase, xtr_iters, n_batches):
+    """ Merge batches of i-vectors
+
+    Args:
+        ivecs_dir (str): abs. path to the i-vectors directory
+        sbase (str): base name of stats file
+        mbase (str): base name of model file
+        xtr_iter (int): number of extraction iterations
+        n_batches (int): number of batches
+    """
+
+    data = []
+    out_f = ivecs_dir + sbase
+    for i in range(xtr_iters):
+        for bix in range(n_batches):
+            fname = ivecs_dir + sbase + "_b" + str(bix) + "_" + mbase + "_e"
+            fname += str(i+1) + ".npy"
+            if os.path.exists(fname):
+                data.append(np.load(fname))
+                subprocess.check_call("rm -rf " + fname, shell=True)
+
+        if len(data) > 0:
+            np.save(out_f + "_" + mbase + "_e" + str(i+1) + ".npy",
+                    np.concatenate(data, axis=0))
+            data = []

@@ -364,9 +364,9 @@ def update_ts_batch_wise(model, opt_t, data_loader, old_loss, config):
 
         else:
             # for the last batch, add T penalty
-            t_pen = model.t_penalty()
 
             if config['reg_t'] == 'l2':
+                t_pen = model.t_penalty()
                 loss_batch += t_pen
 
             loss_batch.backward()

@@ -12,7 +12,6 @@
 """
 
 import os
-# import pwd
 import sys
 import argparse
 import subprocess
@@ -22,31 +21,10 @@ import torch
 import torch.optim as optim
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
-from smm import (SMM, estimate_ubm, update_ws, update_ts,
-                 update_ws_batch_wise, update_ts_batch_wise,
-                 compute_loss_batch_wise)
+from smm import (SMM, estimate_ubm, compute_loss_batch_wise, update_ws,
+                 update_ws_batch_wise, update_ts_batch_wise)
 from TwentyNewsDataset import TwentyNewsDataset
 import utils
-
-
-def merge_ivecs(ivecs_dir, sbase, n_batches):
-    """ Merge ivec batches """
-
-    mbase = os.path.splitext(os.path.basename(ARGS.m))[0]
-    data = []
-    out_f = ivecs_dir + sbase
-    for i in range(ARGS.xtr+1):
-        for bix in range(n_batches):
-            fname = ivecs_dir + sbase + "_b" + str(bix) + "_" + mbase + "_e"
-            fname += str(i+1) + ".npy"
-            if os.path.exists(fname):
-                data.append(np.load(fname))
-                subprocess.check_call("rm -rf " + fname, shell=True)
-
-        if len(data) > 0:
-            np.save(out_f + "_" + mbase + "_e" + str(i+1) + ".npy",
-                    np.concatenate(data, axis=0))
-            data = []
 
 
 def create_model(config, stats):
@@ -72,7 +50,6 @@ def create_sub_model(ubm, hyper, config, X):
     return SMM(X.size()[1], ubm, hyper, config['cuda'])
 
 
-# @profile
 def train_batch_wise(stats, config, train_loader):
     """ Train SMM batch wise (for large datasets) """
 
@@ -97,12 +74,12 @@ def train_batch_wise(stats, config, train_loader):
 
             loss = update_ws_batch_wise(model, opt_w, train_loader)
             loss += model.t_penalty().data.clone()
-            print("%2d W LLH: %.4f" % (i, -loss.cpu().numpy()))
+            # print("%2d W LLH: %.4f" % (i, -loss.cpu().numpy()))
 
             loss = compute_loss_batch_wise(model, train_loader, use='T')
             loss = update_ts_batch_wise(model, opt_t, train_loader, loss, config)
             loss += model.w_penalty().sum().data.clone()
-            print("%2d T LLH: %.4f" % (i, -loss.cpu().numpy()))
+            # print("%2d T LLH: %.4f" % (i, -loss.cpu().numpy()))
 
             if (i+1)*2 == ARGS.trn:
                 print("Half-way LLH:", -loss.cpu().numpy(),
@@ -121,59 +98,6 @@ def train_batch_wise(stats, config, train_loader):
 
     subprocess.check_call("rm -rf " + config['tmp_dir'], shell=True)
     print("Deleted", config['tmp_dir'])
-
-
-def train(stats, config, train_loader):
-    """ Train SMM """
-
-    model = create_model(config, stats)
-
-    for data, _ in train_loader:
-        if ARGS.cuda:
-            data = data.cuda()
-        X = Variable(data.t())
-
-    stime = time()
-
-    if ARGS.trn > config['trn_done']:
-
-        opt_w = optim.Adagrad([model.W], lr=config['eta'])
-        opt_t = optim.Adagrad([model.T], lr=config['eta_t'])
-        print("Training ..")
-
-        loss = model.loss(X)
-        print("Init  LLH:", -loss.data.cpu().numpy())
-
-        config['trn_iters'] = ARGS.trn
-
-        for i in range(config['trn_done'], ARGS.trn):
-
-            # update i-vectors W
-            loss = model.loss(X, use='w')
-            loss = update_ws(model, opt_w, loss, X)
-            loss += model.t_penalty()
-            print("W     LLH:", loss.data.cpu().numpy())
-
-            # update bases T
-            loss = model.loss(X, use='T')
-            loss = update_ts(model, opt_t, loss, X, config)
-            loss += model.w_penalty().sum()
-            print("T     LLH:", loss.data.cpu().numpy())
-
-            if (i+1)*2 == ARGS.trn:
-                print("Half-way LLH:", -loss.data.cpu().numpy()[0])
-                utils.save_model_tr(model, config, i+1)
-        print("Final LLH:", -loss.data.cpu().numpy())
-        print("Training time: %.4f sec" % (time() - stime))
-
-        config['trn_done'] = ARGS.trn
-        utils.save_model_tr(model, config, config['trn_done'])
-
-    else:
-        print("Model already exists with given number of training iterations.")
-        sys.exit()
-
-    subprocess.check_call("rm -rf " + config['tmp_dir'], shell=True)
 
 
 def extract_ivectors(data, model, config, sbase):
@@ -224,10 +148,10 @@ def main():
 
         print("No. of batches:", len(train_loader))
 
-        if len(train_loader) > 1:
-            train_batch_wise(stats, config, train_loader)
-        else:
-            train(stats, config, train_loader)
+        # if len(train_loader) > 1:
+        train_batch_wise(stats, config, train_loader)
+        # else:
+        # train(stats, config, train_loader)
 
     elif ARGS.phase == 'extract':
 
@@ -251,7 +175,9 @@ def main():
                 extract_ivectors(data, model, config,
                                  set_name + '_b' + str(bix))
 
-            merge_ivecs(config['ivecs_dir'], set_name, len(data_loader))
+            mbase = os.path.splitext(os.path.basename(ARGS.m))[0]
+            utils.merge_ivecs(config['ivecs_dir'], set_name, mbase, ARGS.xtr,
+                              len(data_loader))
 
     else:
         print("Invalid option. Should be train or extract.")
