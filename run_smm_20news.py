@@ -89,6 +89,9 @@ def train_batch_wise(stats, config, train_loader):
         print("Final LLH:", -loss.cpu().numpy())
         print("Training time: %.4f sec" % (time() - stime))
 
+        if config['reg_t'] == 'l1':
+            print("T sparsity: {:.4f}".format(utils.t_sparsity(model)))
+
         config['trn_done'] = ARGS.trn
         utils.save_model_tr(model, config, config['trn_done'])
 
@@ -178,6 +181,8 @@ def main():
             mbase = os.path.splitext(os.path.basename(ARGS.m))[0]
             utils.merge_ivecs(config['ivecs_dir'], set_name, mbase, ARGS.xtr,
                               len(data_loader))
+
+        utils.save_ivecs_to_h5(config['ivecs_dir'], mbase, ARGS.xtr)
 
     else:
         print("Invalid option. Should be train or extract.")

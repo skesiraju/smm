@@ -38,9 +38,6 @@ class SMM():
             cuda (boolean): Use GPU? (model is always initialized on CPU)
         """
 
-        # import pdb
-        # pdb.set_trace()
-
         self.cuda = cuda
         if cuda:
             self.dtype = torch.cuda.FloatTensor
@@ -55,7 +52,7 @@ class SMM():
 
         torch.manual_seed(0)  # for consistent results on CPU and GPU
         # bases or subspace or total variability matrix
-        self.T = Variable(torch.randn(V, self.K).type(self.dtype),
+        self.T = Variable(torch.randn(V, self.K).type(self.dtype) * 0.001,
                           requires_grad=True)
 
         # i-vectors
@@ -190,7 +187,7 @@ def update_ws(model, opt_w, loss, X, rng=None):
         bt_ixs = ((old_loss_d - model.nllh_d) < 0).nonzero().squeeze()
         bti += 1
         if bti == 10 and bt_ixs.dim() > 0:
-            print("BT steps > 10 for", bt_ixs.dim(), "W.")
+            print("BT steps > 10 for", bt_ixs.size()[0], "W.")
             model.W.data[:, bt_ixs] = old_w[:, bt_ixs]  # use old_w
 
             if rng:
@@ -203,18 +200,19 @@ def update_ws(model, opt_w, loss, X, rng=None):
     return loss
 
 
-def sign_projection(model, config):
-    """ Sign projection in case of L1 regularization """
+def orthant_projection(model, opt_t, config):
+    """ Orthant projection in case of L1 regularization """
 
     T = model.T.data.cpu().clone().numpy()
     grad = model.T.grad.data.cpu().clone().numpy()
 
     diff_pts = T.nonzero()
     grad[diff_pts] += (config['lam_t'] * np.sign(T[diff_pts]))
+    grad *= -1  # ascent direction
 
     # sub-gradients
     non_diff_pts = np.where(T == 0)
-    if len(non_diff_pts[0]) > 0:
+    if non_diff_pts[0].size > 0:
         for row, col in zip(non_diff_pts[0], non_diff_pts[1]):
             if grad[row, col] < -config['lam_t']:
                 grad[row, col] += config['lam_t']
@@ -226,9 +224,19 @@ def sign_projection(model, config):
                 continue
 
     if model.cuda:
-        model.T.grad.data = torch.from_numpy(grad).float().cuda()
+        model.T.grad.data = torch.from_numpy(-grad).float().cuda()
     else:
-        model.T.grad.data = torch.from_numpy(grad).float()
+        model.T.grad.data = torch.from_numpy(-grad).float()
+    opt_t.step()
+    del grad
+
+    t_new = model.T.data.cpu().clone().numpy()
+    t_new[np.where((T * t_new) < 0)] = 0.0
+
+    if model.cuda:
+        model.T.data = torch.from_numpy(t_new).float().cuda()
+    else:
+        model.T.data = torch.from_numpy(t_new).float()
 
 
 def update_ts(model, opt_t, loss, X, config):
@@ -241,9 +249,9 @@ def update_ts(model, opt_t, loss, X, config):
     loss.backward()  # get the gradients
 
     if config['reg_t'] == 'l1':
-        sign_projection(model, config)
-
-    opt_t.step()
+        orthant_projection(model, opt_t, config)
+    else:
+        opt_t.step()
 
     # Check if the updates have decreased the loss, else backtrack
     # halving the step (max 10 steps).
@@ -372,9 +380,9 @@ def update_ts_batch_wise(model, opt_t, data_loader, old_loss, config):
             loss_batch.backward()
 
             if config['reg_t'] == 'l1':
-                sign_projection(model, config)
-
-            opt_t.step()
+                orthant_projection(model, opt_t, config)
+            else:
+                opt_t.step()
 
             loss = compute_loss_batch_wise(model, data_loader, use='T')
 

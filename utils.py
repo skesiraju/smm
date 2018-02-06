@@ -17,6 +17,7 @@ import codecs
 import subprocess
 import tempfile
 from collections import OrderedDict
+import h5py
 import torch
 import numpy as np
 import scipy.io as sio
@@ -168,6 +169,7 @@ def merge_ivecs(ivecs_dir, sbase, mbase, xtr_iters, n_batches):
         n_batches (int): number of batches
     """
 
+    print("Merging i-vectors..")
     data = []
     out_f = ivecs_dir + sbase
     for i in range(xtr_iters):
@@ -178,7 +180,48 @@ def merge_ivecs(ivecs_dir, sbase, mbase, xtr_iters, n_batches):
                 data.append(np.load(fname))
                 subprocess.check_call("rm -rf " + fname, shell=True)
 
-        if len(data) > 0:
+        if data:
             np.save(out_f + "_" + mbase + "_e" + str(i+1) + ".npy",
                     np.concatenate(data, axis=0))
             data = []
+
+
+def save_ivecs_to_h5(in_ivecs_dir, mbase, xtr_iters):
+    """ Save all ivecs to h5 format to save disk space. """
+
+    print("Compressing i-vectors..")
+    in_files = os.listdir(in_ivecs_dir)
+
+    out_file = in_ivecs_dir + "ivecs_" + mbase + "_e" + str(xtr_iters) + ".h5"
+    h5f = h5py.File(out_file, 'w')
+
+    grp_train = h5f.create_group('train')
+    grp_test = h5f.create_group('test')
+
+    for in_file in in_files:
+
+        base, ext = os.path.splitext(os.path.basename(in_file))
+
+        if ext == ".npy":
+
+            data = np.load(in_ivecs_dir + in_file)
+
+            if "train" in base:
+                grp_train.create_dataset(base, data=data, compression='gzip')
+            else:
+                grp_test.create_dataset(base, data=data, compression='gzip')
+
+    h5f.close()
+
+    print("All ivectors saved to", out_file)
+    subprocess.check_call("rm -rf " + in_ivecs_dir + "*.npy", shell=True)
+    print("Deleted npy files.")
+
+
+def t_sparsity(model):
+    """ Compute sparsity ratio in T """
+
+    V, K = model.T.size()
+    nnz = np.count_nonzero(model.T.data.cpu().clone().numpy())
+    s_rat = ((V * K) - nnz) / (V * K)
+    return s_rat
