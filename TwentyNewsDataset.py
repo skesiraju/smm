@@ -25,8 +25,7 @@ class TwentyNewsDataset(Dataset):
     def __init__(self, set_name):
         """ init """
 
-        # data_dir = '20news-bydate/'
-        data_dir = '/mnt/matylda4/kesiraju/database/20news-bydate/20news-bydate/'
+        data_dir = '20news-bydate/'        
         self.data_mtx = sio.mmread(data_dir + set_name + '.mtx').tocsc()
         labs = np.loadtxt(data_dir + 'matlab/' + set_name + '.label', dtype=int)
 
